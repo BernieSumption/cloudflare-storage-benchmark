@@ -9,8 +9,7 @@
 		"generate:prisma": "prisma generate --no-engine --accelerate",
 		"generate:types": "wrangler types > src/global.d.ts",
 		"cf-typegen": "wrangler types",
-		"patch-prisma": "find node_modules/@prisma/extension-accelerate/dist -type f -exec sed -i '' '/<reference lib=\"dom\" \\/>/d' {} +",
-		"postinstall": "echo !!!!!!"
+		"postinstall": "find node_modules/@prisma/extension-accelerate/dist -type f -exec sed -i '' '/<reference lib=\"dom\" \\/>/d' {} +"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.5.2",

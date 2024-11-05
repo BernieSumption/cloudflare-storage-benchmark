@@ -29,81 +29,110 @@ const engines: Record<EngineId, (env: Env) => Engine> = {
 	error: () => new ErrorEngine(),
 };
 
+const engineNames: Record<EngineId, string> = {
+	kv: 'KV',
+	d1: 'D1',
+	r2: 'R2',
+	cfcache: 'Cloudflare Cache',
+	pp: 'Prisma Postgres',
+	ppwithcache: 'Prisma Postgres (with cache)',
+	error: 'Error',
+};
+
+import uiHtml from './ui.html';
+
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
+	async fetch(request, env): Promise<Response> {
 		try {
 			const url = new URL(request.url);
-			const engineId = url.searchParams.get('engine') as EngineId;
-
-			if (!engineIds.includes(engineId)) {
-				return new Response('engine must be one of ' + engineIds.join(', '), { status: 400 });
+			if (url.pathname === '/') {
+				return new Response(uiHtml, { headers: { 'Content-Type': 'text/html' } });
 			}
-
-			const engine = engines[engineId](env);
-			const prewarm = url.searchParams.has('prewarm');
-			const parallel = url.searchParams.has('parallel');
-			const count = parseFloat(url.searchParams.get('count') ?? '1');
-
-			if (isNaN(count)) {
-				return new Response('count must be a number', { status: 400 });
+			if (url.pathname === '/measure') {
+				return measure(url.searchParams, env);
 			}
-
-			let existing: any;
-			const cacheKey = 'my-record';
-
-			if (prewarm) {
-				await engine.get(cacheKey);
-			}
-
-			const start = Date.now();
-
-			if (parallel) {
-				const results = await Promise.all(
-					Array(count)
-						.fill(null)
-						.map(() => engine.get(cacheKey))
-				);
-				existing = results[0];
-			} else {
-				for (let i = 0; i < count; i++) {
-					existing = await engine.get(cacheKey);
-				}
-			}
-
-			const duration = Date.now() - start;
-
-			if (existing == null) {
-				await engine.put(cacheKey, `A pretty short string generated at ${new Date()}`);
-				return new Response('needed to insert test data, run again for stats');
-			} else {
-				if (typeof existing !== 'string' || !existing.includes('generated at')) {
-					return new Response('test data malformed', { status: 500 });
-				}
-			}
-
-			return new Response(
-				JSON.stringify({
-					duration,
-					prewarm,
-					count,
-					parallel,
-				}),
-				{ headers: { 'Content-Type': 'application/json' } }
-			);
+			return new Response('Not found', { status: 404 });
 		} catch (e: any) {
 			return new Response(String(e?.stack ?? e), { status: 500 });
 		}
 	},
 } satisfies ExportedHandler<Env>;
 
-// TODO:
-// - port test runner from other project, with query params
-// - error handler catches error and serves it as plain text
-// - interface for test method with a populate and query method
-// - DONE implement for KV
-// - DONE implement for D1 (without prisma)
-// - DONE implement for R2
-// - implement for Cache API
-// - implement for Prisma Postgres
-// - implement for Prisma Postgres with Cache
-// - ui option serves HTML with form to set each query param, post to iframe
+async function measure(params: URLSearchParams, env: Env): Promise<Response> {
+	const engineId = params.get('engine') as EngineId;
+
+	if (!engineIds.includes(engineId)) {
+		return new Response('engine must be one of ' + engineIds.join(', '), { status: 400 });
+	}
+
+	const engine = engines[engineId](env);
+	const prewarm = params.has('prewarm');
+	const parallel = params.has('parallel');
+	const html = params.has('html');
+	const count = parseFloat(params.get('count') ?? '1');
+
+	if (isNaN(count) || count < 1 || count > 1000) {
+		return new Response('count must be a number between 1 and 1000', { status: 400 });
+	}
+
+	let existing: any;
+	const cacheKey = 'my-record';
+
+	if (prewarm) {
+		await engine.get(cacheKey);
+	}
+
+	const start = Date.now();
+
+	if (parallel) {
+		const results = await Promise.all(
+			Array(count)
+				.fill(null)
+				.map(() => engine.get(cacheKey))
+		);
+		existing = results[0];
+	} else {
+		for (let i = 0; i < count; i++) {
+			existing = await engine.get(cacheKey);
+		}
+	}
+
+	const duration = Date.now() - start;
+
+	if (existing == null) {
+		await engine.put(cacheKey, `A pretty short string generated at ${new Date()}`);
+		return new Response('needed to insert test data, run again for stats');
+	} else {
+		if (typeof existing !== 'string' || !existing.includes('generated at')) {
+			return new Response('test data malformed', { status: 500 });
+		}
+	}
+
+	if (html) {
+		const result = `Executed ${count} ${parallel ? 'parallel' : 'sequential'} request${count === 1 ? '' : 's'} to ${
+			engineNames[engineId]
+		} in ${duration}ms`;
+		return new Response(
+			`
+			<html><body>
+			Executed ${count}
+			${parallel ? 'parallel' : 'sequential'}
+			request${count === 1 ? '' : 's'} to
+			${engineNames[engineId]}
+			in ${duration}ms
+			${count > 1 && !parallel ? `(that's ${Math.round(duration / count)}ms per request)` : ''}
+			</body></html>`,
+			{ headers: { 'Content-Type': 'text/html' } }
+		);
+	}
+
+	return new Response(
+		JSON.stringify({
+			duration,
+			prewarm,
+			count,
+			parallel,
+		}),
+		{ headers: { 'Content-Type': 'application/json' } }
+	);
+}
